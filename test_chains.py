@@ -3,9 +3,10 @@ import sys
 import opchain
 
 
-loglevel = logging.ERROR
+loglevel = logging.INFO
 symbol = 'TSLA'
 logging.basicConfig(format='%(asctime)s %(message)s', level=loglevel)
+logging.info(f" loglevel: {loglevel}")
 """
 #data = opchain.get_chains(symbol)
 #print(f"got {len(data.keys())} keys")
@@ -50,13 +51,26 @@ print(f"got {len(df)} contracts")
 candidates = opchain.get_candidates(df, buy_range=(.09, .38), sell_range=(.2, .45))
 print(f"got {len(candidates)} candidates")
 """
-symbol = "TSLA"
-df = opchain.get_dataframe(symbol, putCall="PUT", daysToExpiration=45)
+symbol = "$NDX.X"
+logging.debug(f"symbol: {symbol}")
+#df = opchain.get_dataframe(symbol, putCall="CALL", run_date="2021-04-08", daysToExpiration=45)
+df = opchain.get_dataframe(symbol, putCall="CALL") #, run_date="2021-04-08")  #, daysToExpiration=45)
 print(f"got {len(df)} option rows")
-candidates = opchain.get_candidates(df)
+print("mmm:", df.attrs["mmm"])
+days = df['daysToExpiration']
+days = list(set(list(days.values)))
+days.sort()
+print(days)
+
+candidates = opchain.get_candidates(df, daysToExpiration=24)
 print(f"got {len(candidates)} candidate rows")
 width = candidates['width']
 print(f"min width: {width.min()}")
 print(f"max width: {width.max()}")
+print(candidates.columns)
+print("candidate attributes")
+for k in candidates.attrs:
+    v = candidates.attrs[k]
+    print(f"{k}: {v}")
 
 

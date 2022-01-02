@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+import sys
 import time
 import json
 import logging
@@ -11,14 +12,30 @@ OPTION_PROPS = ("description", "symbol", "putCall", "strikePrice", "bid", "ask",
     "netChange", "volatility", "delta", "gamma", "theta", "vega", "openInterest", "timeValue",
     "theoreticalOptionValue")
 """
-OPTION_PROPS = ["description", "symbol", "putCall", "last", "mark", "bidAskSize", "delta", "openInterest", "theoreticalOptionValue", "strikePrice", "expirationDate", "daysToExpiration", "totalVolume"]
+OPTION_PROPS = ["description", 
+                "symbol", 
+                "expirationDate",
+                "daysToExpiration",
+                "putCall", 
+                "strikePrice",
+                "delta",
+                "last", 
+                "mark", 
+                "bidAskSize", 
+                "openInterest", 
+                "theoreticalOptionValue", 
+                "totalVolume"]
 
 MIN_VAL = -999.0 
 DEFAULT_DAYS = 45
-CSR_CS_DELTA_RANGE = (0.2, 0.45)     
-CSR_CB_DELTA_RANGE = (0.09, 0.38)      
-PSR_PS_DELTA_RANGE = (0.2, 0.45)    
-PSR_PB_DELTA_RANGE = (0.09, 0.38)    
+CSR_CS_DELTA_RANGE = (0.1, 0.17)     #was .18
+CSR_CB_DELTA_RANGE = (0.005, 0.17)      
+PSR_PS_DELTA_RANGE = (0.1, 0.14)    #.15
+PSR_PB_DELTA_RANGE = (0.005, 0.14)   
+USE_PRICE = "mark"
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 def get_today():
     now = time.time()
@@ -28,6 +45,7 @@ def get_today():
     
 
 def get_chains(symbol, run_date=None, dt_min=None, dt_max=None, reload=False):
+    logging.info(f"get_chains {symbol}, run_date: {run_date}")
     now = time.time()
     if dt_min is None:
         # use current time
@@ -150,6 +168,77 @@ def _get_mapdata(option_map, rows, underlying=None):
                         row.append('')
                 rows.append(row)
 
+def get_mmm(chains, underlying=None):
+
+    def get_DaysFromExpDate(expDate):
+        fields = expDate.split(':')
+        if len(fields) != 2:
+            logging.error(f"get_mmm = unexpected key: {expDate}")
+            return None
+        daysToExpiration = int(fields[1])
+        return daysToExpiration
+
+    def get_bracket(expDateMap, daysToExpiration=None, underlying=None):
+        bundle = None
+        for expDate in expDateMap:
+            days = get_DaysFromExpDate(expDate)
+            if days == daysToExpiration:
+                bundle = expDateMap[expDate]
+                break
+        if bundle is None:
+            logging.error(f"get_mmm, couldn't find bundle for daysToExpiration: {daysToExpiration}")
+            return None
+        s1 = None
+        s2 = None
+        a1 = None
+        a2 = None
+        for bundle_key in bundle:
+            options = bundle[bundle_key]
+            logging.debug(f"{len(options)} options, underlying: {underlying}")
+            for option in options:
+                strikePrice = float(option["strikePrice"])
+                ask = float(option['mark'])
+                if strikePrice < underlying:
+                    if s1 is None or strikePrice > s1:
+                        s1 = strikePrice
+                        a1 = ask
+                else:
+                    if s2 is None or strikePrice < s2:
+                        s2 = strikePrice
+                        a2 = ask
+        if a1 is None:
+            a1 = underlying
+        if a2 is None:
+            a2 = underlying 
+        return (a1, a2)
+
+    put_map = chains["putExpDateMap"]
+    call_map = chains["callExpDateMap"]
+    #print(f"get_mmm, underlying: {underlying}")
+    mmm_map = {} # map days To Expiration to mmm
+    
+    for expDate in put_map:
+        # key is in the form "2021-04-01:45" - expiration date:days to expiration
+        # sep out days to Expiration and use tht for mmm_map
+        fields = expDate.split(':')
+        if len(fields) != 2:
+            logging.error(f"get_mmm = unexpected key: {expDate}")
+            return None
+        daysToExpiration = get_DaysFromExpDate(expDate)
+        put_bracket = get_bracket(put_map, daysToExpiration=daysToExpiration, underlying=underlying )
+        #print(f"expDate: {expDate} got put_bracket: {put_bracket}")
+        call_bracket = get_bracket(call_map, daysToExpiration=daysToExpiration, underlying=underlying )
+        #print(f"expDate: {expDate} got call_bracket: {call_bracket}")
+        if put_bracket is  None:
+            logging.warning("couldn't determine put bracket")
+            return None
+        elif call_bracket is None:
+            logging.warning("couldn't determine call bracket")
+            return None
+        else:
+            mmm = 0.5 * (call_bracket[0] + call_bracket[1] + put_bracket[0] + put_bracket[1])
+            mmm_map[daysToExpiration] = mmm
+    return mmm_map
 
 def get_working_days(df, daysToExpiration=DEFAULT_DAYS):
     days = df['daysToExpiration']
@@ -189,6 +278,9 @@ def get_dataframe(symbol, putCall=None, run_date=None, reload=False, daysToExpir
     df.attrs["interestRate"] = interestRate
     df.attrs["runDate"] = run_date
     df.attrs["symbol"] = symbol
+
+    mmm_map = get_mmm(chains, underlying=underlying)
+    df.attrs["mmm"] = mmm_map
 
     if daysToExpiration:
         # return just those rows that are closest to desired daysToExpiration
@@ -242,60 +334,7 @@ def get_prb(value, options=None):
  
     return abs(prb)
 
-def get_derived(row, putCall=None, underlying=1.0, options=None):
-    row["e"] = MIN_VAL
-    row["mg"] = MIN_VAL
-    row["width"] = MIN_VAL
-    row["mg_w"] = MIN_VAL
-    row["mg_u"] = MIN_VAL
-    row["pop"] = MIN_VAL
-    row["e_u"] = MIN_VAL
-    row["ml"] = 0.0
-    row["ml_u"] = 0.0
-    row['e'] = 0.0
-
-    if putCall not in ("PUT", "CALL"):
-        raise ValueError("putCall should be either PUT or CALL")
-    
-    if putCall == "PUT":
-        buy_prefix = "b_"
-        sell_prefix = "s_"
-    else:
-        buy_prefix = "b_"
-        sell_prefix = "s_"
-    
-    #logging.debug(f"ps: [{row['ps_description'].strip()}]")
-    #logging.debug(f"pb: [{row['pb_description'].strip()}]")
-    
-    sell_price = row[sell_prefix+"mark"]
-    buy_price = row[buy_prefix+"mark"]
-    sell_strike = row[sell_prefix+"strikePrice"]
-    buy_strike = row[buy_prefix+"strikePrice"]
-    sell_delta = row[sell_prefix+"delta"]
-    buy_delta = row[buy_prefix+"delta"]
-    
-    npr = sell_price - buy_price
-    width = abs(sell_strike - buy_strike)
-
-    if npr <= 0:
-        return False
-    if width <= 0:
-        return False
-    mg = npr 
-    ml = -(abs(sell_strike - buy_strike) - npr)
-    ml_u = 100 * ml / underlying
-
-    if putCall == "CALL": 
-        be_strike = sell_strike + npr
-    else:
-        be_strike = sell_strike - npr
-      
-    be_delta = get_prb(be_strike, options=options)
-    if be_delta is None:
-        return False
-    be_prb = 1 - be_delta
-
-    pop = 100.0 * be_prb
+def gete(mg, ml, sell_delta, buy_delta, be_delta):
 
     a_prb = 1 - abs(sell_delta)  
     b_prb = abs(sell_delta - be_delta)
@@ -311,22 +350,103 @@ def get_derived(row, putCall=None, underlying=1.0, options=None):
     ed = ml * d_prb
     logging.debug(f"ed: {ed}")
     e = ea + eb + ec + ed
-    logging.debug(f"e: {e}")
-    e_u = 100 * e / underlying
-    logging.debug(f"e_u: {e_u}")
 
+    return e
+
+def get_derived(row, putCall=None, underlying=1.0, options=None):
+    row["e"] = MIN_VAL
+    #row["e_u"] = MIN_VAL
+    row["e_w"] = MIN_VAL  
+    row["mg"] = MIN_VAL
+    #row["mg_u"] = MIN_VAL
+    row["mg_w"] = MIN_VAL
+    row["eml"] = MIN_VAL
+    row["eml_w"] = MIN_VAL
+    row["dme"] = MIN_VAL
+    #row["dme_u"] = MIN_VAL
+    row["dme_w"] = MIN_VAL
+    row["width"] = MIN_VAL
+    row["pop"] = MIN_VAL
+    #row["popt"] = MIN_VAL
+    row["ml"] = 0.0
+    #row["ml_u"] = 0.0
+
+    if putCall not in ("PUT", "CALL"):
+        raise ValueError("putCall should be either PUT or CALL")
+    
+    if putCall == "PUT":
+        buy_prefix = "b_"
+        sell_prefix = "s_"
+    else:
+        buy_prefix = "b_"
+        sell_prefix = "s_"
+    
+    #logging.debug(f"ps: [{row['ps_description'].strip()}]")
+    #logging.debug(f"pb: [{row['pb_description'].strip()}]")
+    
+    sell_price = row[sell_prefix+USE_PRICE]
+    buy_price = row[buy_prefix+USE_PRICE]
+    sell_strike = row[sell_prefix+"strikePrice"]
+    buy_strike = row[buy_prefix+"strikePrice"]
+    sell_delta = row[sell_prefix+"delta"]
+    buy_delta = row[buy_prefix+"delta"]
+    
+    npr = sell_price - buy_price
+    width = abs(sell_strike - buy_strike)
+
+    if npr <= 0:
+        return False
+    if width <= 0:
+        return False
+    mg = npr 
+    ml = -(width - npr)
+
+    if putCall == "CALL": 
+        be_strike = sell_strike + npr
+    else:
+        be_strike = sell_strike - npr
+      
+    be_delta = get_prb(be_strike, options=options)
+    if be_delta is None:
+        return False
+    be_prb = 1 - be_delta
+
+    pop = 100.0 * be_prb
+    popt = 100 * ( 1 - mg / width)
+
+    e = gete(mg, ml, sell_delta, buy_delta, be_delta)
+    
     mg_w = 100 * mg / width
-    mg_u = 100 * mg / underlying
 
+    #e_u = 10000 * e / underlying
+    e_w = 100 * e / width
+    logging.debug(f"e_w: {e_w}")
+    mg_u = 10000 * mg / underlying
+    ml_u = 10000 * ml / underlying
+    eml = width * abs(sell_delta)
+    dme = mg - eml
+    dme_w = mg_w - 100 * abs(sell_delta)
+    dme_u = 10000 * dme / underlying
+  
+    row["putcall"] = putCall
     row["e"] = e
-    row["e_u"] = e_u
+    #row["e_u"] = e_u
+    row["e_w"] = e_w
     row["mg"] = mg
     row["ml"] = ml
-    row["ml_u"] = ml_u
+    #row["ml_u"] = ml_u
     row["width"] = width
+    row["eml"] = eml
+    row["dme"] = dme
+    #row["dme_u"] = dme_u   
+    row["dme_w"] = dme_w
     row["mg_w"] = mg_w
-    row["mg_u"] = mg_u
+    #row["mg_u"] = mg_u
+
+    row["dme_w"] = dme_w
     row["pop"] = pop
+    #row["popt"] = popt
+
     return True
 
 def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, daysToExpiration=None):
@@ -376,7 +496,7 @@ def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, day
     for name in keep_list:
         columns.append(sell_prefix+name)
         columns.append(buy_prefix+name)
-    derived_list = ["e", "mg", "width", "mg_w", "mg_u", "pop", "e_u", "ml", "ml_u" ]
+    derived_list = ["putcall", "e", "mg", "eml", "dme", "dme_u", "dme_w", "width", "mg_w", "mg_u", "mgp_u", "pop", "popt", "e_u", "e_w", "mtp", "ml", "ml_u" ]
     for name in derived_list:
         columns.append(name)
           
@@ -444,7 +564,7 @@ def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, day
 
     #candidates['pom'] = 1 - abs(candidates['s_delta'])
     logging.info(f"get_candidates, returning {len(candidates)} candidates from {len(contracts)} contracts")
-    candidates = candidates.sort_values(by="e_u", ascending=False)
+    candidates = candidates.sort_values(by="e_w", ascending=False)
     return candidates
     
 

@@ -24,11 +24,11 @@ def get_data(stocklist_file):
                 line = f.readline()
                 continue
             print(symbol)
-            df = opchain.get_dataframe(symbol)
+            df = opchain.get_dataframe(symbol, reload=True)
             if df is None or len(df) == 0:
                 print("unable to get data for {symbol}")
                 failcount += 1
-                if failcount == 3:
+                if failcount == 10:
                     print("too many failures, quitting")
                     sys.exit()
             else:
