@@ -4,6 +4,7 @@ import os
 import logging
 import pandas as pd
 import opchain
+import time
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -12,9 +13,9 @@ MIN_DMU = 0.0
 MIN_DMU2 = -8.0
 MIN_DME_U = -999.0
 MIN_MG = 0.5
-ODD_DAY_SYMBOLS = ["DJI.C", "DIA", "$SPX.X", "SPY", "$NDX.X", "QQQ", "$RUT.X", "IWM", "$VIX.X", "VXX"]
+ODD_DAY_SYMBOLS = ["DJI.C", "DIA", "$SPX.X", "SPY", "$NDX.X", "QQQ", "$RUT.X", "IWM", "$VIX.X", "VXX", "EWZ"] #brazil
 MIN_DAY = 38
-MAX_DAY = 112
+MAX_DAY = 78
 MIN_EW = -1.0
 MIN_DME_W = 0.0
 NUM_EWS = 30
@@ -37,12 +38,12 @@ BEST_EW_COLUMNS = ["symbol",
                    "dme",
                    #"DME_u",
                    "dme_w",
+                   "e_w",
+                   "mg_w",
                    "pop",
                    # "popt",
                    "width",
                    #"e_u",
-                   "e_w",
-                   "mg_w",
                    #"eml_u",
                    #"ml_u",
                    #"mg_u",
@@ -130,7 +131,7 @@ def getBestEw(df, daysToExpiration=None, count=1):
     return rows
  
 
-def getBestEws(stocklist_file, rows, run_date=None, exp_days=None):
+def getBestEUs(stocklist_file, rows, run_date=None, exp_days=None):
     if not os.path.isfile(stocklist_file):
         eprint(f"{stocklist_file} not found")
         sys.exit(1)
@@ -183,6 +184,46 @@ def getBestEws(stocklist_file, rows, run_date=None, exp_days=None):
     eprint(f"got data for {len(symbols)} symbols {symbols} from file: {stocklist_file}")
 
 
+def minmaxFilter(df, use_odd_day_symbols=False):
+    logging.info(f"df minmaxstart:  {len(df)} rows")
+    df = df[df.days_exp >= MIN_DAY]
+    df = df[df.days_exp <= MAX_DAY]
+    logging.info(f"len after min/max days: {len(df)}")
+    df = df[df.e_w > MIN_EW]
+    logging.info(f"len after > MIN_EW: {len(df)}")
+    #df = df.drop(df[df.dmu <= MIN_DMU].index) 
+    df = df[df.dmu >= MIN_DMU]
+    logging.info(f"len after <= MIN_DMU: {len(df)}")
+    # df = df.drop(df[df.dmu2 <= MIN_DMU2].index)
+    df = df[df.dmu2 >= MIN_DMU2]
+    logging.info(f"len after <= MIN_DMU2: {len(df)}")
+    # df = df.drop(df[df.dme_u <= MIN_DME_U].index)
+    logging.debug(f"dme_w max: {df.dme_w.max()}")
+    logging.debug(f"dme_w min: {df.dme_w.min()}")
+    #df = df.drop(df[df.dme_w <= MIN_DME_W].index)
+    df = df[df.dme_w > MIN_DME_W]
+    logging.info(f"len after > MIN_DME_W: {len(df)}")
+    # df = df.drop(df[df.mg <= MIN_MG].index)
+    df = df[df.mg >= MIN_MG]
+    logging.info(f"len after <= MIN_MG: {len(df)}")
+    if len(df) == 0:
+        logging.info("no rows, returning empty dataframe")
+        return df
+           
+    #eprint("symbols:", df['symbol'])
+    eprint("df minmaxstart start filter symbols:", len(df))
+    if use_odd_day_symbols:
+        df = df[df.symbol.isin(ODD_DAY_SYMBOLS)]
+    else:
+        eprint("filtered symbols")
+        df = df[~df.symbol.isin(ODD_DAY_SYMBOLS)]
+
+    eprint("trimed df:", len(df))
+    
+    df = df.sort_values(by="dme_w", ascending=False)  # DME_u
+    return df
+     
+
 # main
 #
 if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
@@ -218,27 +259,29 @@ logging.basicConfig(format='%(asctime)s %(message)s', level=loglevel)
 
 # assume it's a csv file of symbols
 rows = []
+start_time = time.time()
+eprint("getBestEUs start")
 for csv_file in csv_files:
-    getBestEws(csv_file, rows, run_date=run_date, exp_days=exp_days)
-     
+    getBestEUs(csv_file, rows, run_date=run_date, exp_days=exp_days)
+eprint(f"getBestEUs done - {int(time.time() - start_time)}")     
 if not rows:
     eprint("no rows found!")
     sys.exit()
 # row = rows[0]
 # columns = list(row.keys())
-df = pd.DataFrame(rows, columns=BEST_EW_COLUMNS)
+df = pd.DataFrame(rows, columns=BEST_EW_COLUMNS, )
 
 days = df['days_exp']
 print(df.columns)
 print("days:", days)
-print("fow count:", len(df))
+print("row count:", len(df))
 days = list(set(list(days.values)))
 days.sort()
 
-
-
 if out_dir:
     original_stdout = sys.stdout # Save a reference to the original standard output
+    eprint(f"days start  - {int(time.time() - start_time)}")     
+
     for day in days:  
         if day < MIN_DAY:
             #eprint(f"{day} less than {MIN_DAY}, skipping")
@@ -248,23 +291,12 @@ if out_dir:
             continue
         logging.info(f"running day: {day}")
         df_day = df[df.days_exp == day]
-        eprint(f"df_day: {len(df_day)} rows")
+        logging.info(f"df_day: {len(df_day)} rows")
         if len(df_day.index) == 0:
-            eprint("no rows")
+            logging.info("no rows")
             continue # no rows
-        df_day = df_day[df_day.e_w > MIN_EW]
-        logging.info(f"df_day pod e_w: {len(df_day)} rows")
-
-        df_day = df_day.drop(df_day[df_day.dmu <= MIN_DMU].index) 
-        df_day = df_day.drop(df_day[df_day.dmu <= MIN_DMU].index)
-        df_day = df_day.drop(df_day[df_day.dmu2 <= MIN_DMU2].index)
-        # df_day = df_day.drop(df_day[df_day.dme_u <= MIN_DME_U].index)
-        df_day = df_day.drop(df_day[df_day.dme_w <= MIN_DME_W].index)
-        df_day = df_day.drop(df_day[df_day.mg <= MIN_MG].index)
-        for symbol in ODD_DAY_SYMBOLS:
-            df_day = df_day.drop(df_day[df_day.symbol == symbol].index)
-        df_day = df_day.sort_values(by="dme_w", ascending=False)  # DME_u
-
+        df_day = minmaxFilter(df_day)
+         
         if len(df_day.index) > 0:
             filename = f"{out_dir}/best_ew_{run_date}_{day}.csv"
             df_day = df_day.rename(columns=RENAME_COLUMNS)
@@ -272,23 +304,19 @@ if out_dir:
                 sys.stdout = f # Change the standard output to the file we created.
                 output = df_day.to_csv(float_format="%.2f")
                 print(output)
+    eprint(f"days done  - {int(time.time() - start_time)}")     
+
     # odd days file
     filename = f"{out_dir}/best_ew_{run_date}_index.csv"
-    df_odd = df[df["symbol"].isin(ODD_DAY_SYMBOLS)]
-    df_odd = df_odd[df_odd.e_w > MIN_EW]
-    df_odd = df_odd.drop(df_odd[df_odd.dmu <= MIN_DMU].index)
-    df_odd = df_odd.drop(df_odd[df_odd.dmu2 <= MIN_DMU2].index)
-    #    df_odd = df_odd.drop(df_odd[df_odd.dme_u <= MIN_DME_U].index)
-    df_odd = df_odd.drop(df_odd[df_odd.dme_w <= MIN_DME_W].index)
-    df_odd = df_odd.drop(df_odd[df_odd.mg <= MIN_MG].index)
-    df_odd = df_odd.drop(df_odd[df_odd["days_exp"] < MIN_DAY].index)
-    df_odd = df_odd.drop(df_odd[df_odd["days_exp"] > MAX_DAY].index)
-    df_odd = df_odd.sort_values(by="symbol", ascending=False)
+    df = pd.DataFrame(rows, columns=BEST_EW_COLUMNS)
+    df_odd = minmaxFilter(df, use_odd_day_symbols=True)
     df_odd = df_odd.rename(columns=RENAME_COLUMNS)
     with open(filename, 'w') as f:
         sys.stdout = f # Change the standard output to the file we created.
         output = df_odd.to_csv(float_format="%.2f")
         print(output)
+    eprint(f"odds done  - {int(time.time() - start_time)}")     
+
 
     sys.stdout = original_stdout # Reset the standard output to its original value
 else:

@@ -29,9 +29,9 @@ OPTION_PROPS = ["description",
 MIN_VAL = -999.0 
 DEFAULT_DAYS = 45
 CSR_CS_DELTA_RANGE = (0.1, 0.17)     #was .18
-CSR_CB_DELTA_RANGE = (0.005, 0.17)      
+CSR_CB_DELTA_RANGE = (0.009, 0.17)      
 PSR_PS_DELTA_RANGE = (0.1, 0.14)    #.15
-PSR_PB_DELTA_RANGE = (0.005, 0.14)   
+PSR_PB_DELTA_RANGE = (0.009, 0.14)   
 USE_PRICE = "mark"
 
 def eprint(*args, **kwargs):
@@ -45,8 +45,9 @@ def get_today():
     
 
 def get_chains(symbol, run_date=None, dt_min=None, dt_max=None, reload=False):
-    logging.info(f"get_chains {symbol}, run_date: {run_date}")
+    logging.info(f"get_chains {symbol}, run_date: {run_date} reload=True")
     now = time.time()
+    logging.info(f"start time: {int(now)}")
     if dt_min is None:
         # use current time
         dt_min = datetime.fromtimestamp(now)
@@ -83,6 +84,7 @@ def get_chains(symbol, run_date=None, dt_min=None, dt_max=None, reload=False):
     # params["daysToExpiration"] = 45
     req = "https://api.tdameritrade.com/v1/marketdata/chains"
     rsp = requests.get(req, params=params, headers=headers)
+    logging.info(f"making request to tdameritrade: {req}")
     if rsp.status_code != 200:
         logging.error(f"got bad status code: {rsp.status_code}")
         return None
@@ -501,6 +503,8 @@ def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, day
         columns.append(name)
           
     candidate_rows = []
+    logging.info(f"get_candidates - iteratting over: {len(contracts)} rows")
+    start = time.time()
     
     for i, b in contracts.iterrows(): 
         if b.daysToExpiration != daysToExpiration:
@@ -513,9 +517,11 @@ def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, day
             logging.debug(f"skipping row {i}, b delta {b.delta} out of range: {buy_range}")
             continue
 
+        logging.info(f"get_candidates - inner iteration loop: {len(contracts)} rows")
         for j, s in contracts.iterrows():
             if i == j:
                 continue
+            
             if s.daysToExpiration != daysToExpiration:
                 logging.debug(f"skipping sell row {j}, daysToExpiration[{s.daysToExpiration}] != {daysToExpiration}")
                 continue
@@ -564,6 +570,7 @@ def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, day
 
     #candidates['pom'] = 1 - abs(candidates['s_delta'])
     logging.info(f"get_candidates, returning {len(candidates)} candidates from {len(contracts)} contracts")
+    logging.info(f"time spent for {len(contracts)}: {(time.time() - start):.2f}")
     candidates = candidates.sort_values(by="e_w", ascending=False)
     return candidates
     
