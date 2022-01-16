@@ -28,9 +28,9 @@ OPTION_PROPS = ["description",
 
 MIN_VAL = -999.0 
 DEFAULT_DAYS = 45
-CSR_CS_DELTA_RANGE = (0.1, 0.17)     #was .18
+CSR_CS_DELTA_RANGE = (0.05, 0.17)     #was .18
 CSR_CB_DELTA_RANGE = (0.009, 0.17)      
-PSR_PS_DELTA_RANGE = (0.1, 0.14)    #.15
+PSR_PS_DELTA_RANGE = (0.05, 0.14)    #.15
 PSR_PB_DELTA_RANGE = (0.009, 0.14)   
 USE_PRICE = "mark"
 

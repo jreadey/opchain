@@ -1,4 +1,3 @@
-
 import sys
 import os
 import logging
@@ -14,11 +13,11 @@ MIN_DMU2 = -8.0
 MIN_DME_U = -999.0
 MIN_MG = 0.5
 ODD_DAY_SYMBOLS = ["DJI.C", "DIA", "$SPX.X", "SPY", "$NDX.X", "QQQ", "$RUT.X", "IWM", "$VIX.X", "VXX", "EWZ"] #brazil
-MIN_DAY = 38
+MIN_DAY = 45
 MAX_DAY = 78
 MIN_EW = -1.0
 MIN_DME_W = 0.0
-NUM_EWS = 30
+NUM_EWS = 100
 
 
 BEST_EW_COLUMNS = ["symbol",
