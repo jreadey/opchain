@@ -13,15 +13,15 @@ MIN_DMU2 = -8.0
 MIN_DME_U = -999.0
 MIN_MG = 0.5
 ODD_DAY_SYMBOLS = ["DJI.C", "DIA", "$SPX.X", "SPY", "$NDX.X", "QQQ", "$RUT.X", "IWM", "$VIX.X", "VXX", "EWZ"] #brazil
-MIN_DAY = 45
-MAX_DAY = 78
-MIN_EW = -1.0
+MIN_DAY = 40
+MAX_DAY = 80
+MIN_EW = -0.5
 MIN_DME_W = 0.0
 NUM_EWS = 100
 
 
 BEST_EW_COLUMNS = ["symbol",
-                   "underlyingPrice",
+                   #"underlyingPrice",
                    "exp_date",
                    "days_exp",
                    "putcall",
@@ -34,7 +34,7 @@ BEST_EW_COLUMNS = ["symbol",
                    #"mtp",
                    "mg",
                    "eml",
-                   "dme",
+                   #"dme",
                    #"DME_u",
                    "dme_w",
                    "e_w",

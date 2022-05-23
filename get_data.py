@@ -19,6 +19,9 @@ def get_data(stocklist_file):
                 line = f.readline()
                 continue
             symbol = fields[0]
+            if not symbol or symbol[0] == '#':
+                line = f.readline()
+                continue
             if not symbol.isupper():
                 print(f"ignoring symbol: {symbol}")
                 line = f.readline()

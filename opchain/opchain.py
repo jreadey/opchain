@@ -28,10 +28,11 @@ OPTION_PROPS = ["description",
 
 MIN_VAL = -999.0 
 DEFAULT_DAYS = 45
-CSR_CS_DELTA_RANGE = (0.05, 0.17)     #was .18
-CSR_CB_DELTA_RANGE = (0.009, 0.17)      
-PSR_PS_DELTA_RANGE = (0.05, 0.14)    #.15
-PSR_PB_DELTA_RANGE = (0.009, 0.14)   
+CSR_CS_DELTA_RANGE = (0.05, 0.15)     #was .18 .17
+CSR_CB_DELTA_RANGE = (0.009, 0.15)      
+PSR_PS_DELTA_RANGE = (0.05, 0.12)    #.15 .14
+PSR_PB_DELTA_RANGE = (0.009, 0.12)  
+MIN_WIDTH = 25.0
 USE_PRICE = "mark"
 
 def eprint(*args, **kwargs):
@@ -196,7 +197,7 @@ def get_mmm(chains, underlying=None):
         a2 = None
         for bundle_key in bundle:
             options = bundle[bundle_key]
-            logging.debug(f"{len(options)} options, underlying: {underlying}")
+            #logging.debug(f"{len(options)} options, underlying: {underlying}")
             for option in options:
                 strikePrice = float(option["strikePrice"])
                 ask = float(option['mark'])
@@ -255,6 +256,9 @@ def get_working_days(df, daysToExpiration=DEFAULT_DAYS):
     return closest
 
 def get_dataframe(symbol, putCall=None, run_date=None, reload=False, daysToExpiration=None):
+    if not symbol or symbol[0] == '#':
+        eprint("unexpected symbol:", symbol)
+        raise ValueError("bad symbol")
     chains = get_chains(symbol, run_date=run_date, reload=reload)
     if not chains:
         logging.error(f"no data found for symbol: {symbol}")
@@ -344,13 +348,13 @@ def gete(mg, ml, sell_delta, buy_delta, be_delta):
     d_prb = abs(buy_delta)
      
     ea = mg * a_prb
-    logging.debug(f"ea: {ea}")
+    #logging.debug(f"ea: {ea}")
     eb = 0.5 * mg * b_prb
-    logging.debug(f"eb: {eb}")  # wrong
+    #logging.debug(f"eb: {eb}")  # wrong
     ec = 0.5 * ml * c_prb
-    logging.debug(f"ec: {ec}")  # wrong
+    #logging.debug(f"ec: {ec}")  # wrong
     ed = ml * d_prb
-    logging.debug(f"ed: {ed}")
+    #logging.debug(f"ed: {ed}")
     e = ea + eb + ec + ed
 
     return e
@@ -398,7 +402,7 @@ def get_derived(row, putCall=None, underlying=1.0, options=None):
 
     if npr <= 0:
         return False
-    if width <= 0:
+    if width < MIN_WIDTH:
         return False
     mg = npr 
     ml = -(width - npr)
@@ -414,7 +418,7 @@ def get_derived(row, putCall=None, underlying=1.0, options=None):
     be_prb = 1 - be_delta
 
     pop = 100.0 * be_prb
-    popt = 100 * ( 1 - mg / width)
+    #popt = 100 * ( 1 - mg / width)
 
     e = gete(mg, ml, sell_delta, buy_delta, be_delta)
     
@@ -422,13 +426,13 @@ def get_derived(row, putCall=None, underlying=1.0, options=None):
 
     #e_u = 10000 * e / underlying
     e_w = 100 * e / width
-    logging.debug(f"e_w: {e_w}")
-    mg_u = 10000 * mg / underlying
-    ml_u = 10000 * ml / underlying
+    #logging.debug(f"e_w: {e_w}")
+    #mg_u = 10000 * mg / underlying
+    #ml_u = 10000 * ml / underlying
     eml = width * abs(sell_delta)
     dme = mg - eml
     dme_w = mg_w - 100 * abs(sell_delta)
-    dme_u = 10000 * dme / underlying
+    #dme_u = 10000 * dme / underlying
   
     row["putcall"] = putCall
     row["e"] = e
@@ -451,6 +455,189 @@ def get_derived(row, putCall=None, underlying=1.0, options=None):
 
     return True
 
+
+def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, daysToExpiration=None):
+    if len(contracts) == 0:
+        logging.warning("no contracts")
+        return None
+    if putCall is None:
+        putCalls = contracts['putCall']
+        unique_putCalls = list(set(list(putCalls.values)))
+        if len(unique_putCalls) != 1:
+            raise ValueError("putCall should be either PUT or CALL")
+        # contracts are all puts or all calls, so use that
+        putCall = unique_putCalls[0]
+    elif putCall.upper() not in ("PUT", "CALL"):
+        raise ValueError("putCall should be either PUT or CALL")
+    
+    logging.info(f"get_candidates - {len(contracts)} contracts - using putCall: {putCall}")
+            
+    if daysToExpiration is None:
+        days = contracts['daysToExpiration']
+        unique_days = list(set(list(days.values)))
+        unique_days.sort()
+        if len(unique_days) != 1:
+            raise ValueError(f"set daysToExpiration to one of the values in: {unique_days}")
+        daysToExpiration = unique_days[0]
+    logging.info(f"get_candidates - using daysToExpiration: {daysToExpiration}")
+    
+    if putCall.upper() == "PUT":
+        if sell_range is None:
+            sell_range = PSR_PS_DELTA_RANGE
+        if buy_range is None:
+            buy_range = PSR_PB_DELTA_RANGE
+        
+    if putCall.upper() == "CALL":
+        if sell_range is None:
+            sell_range = CSR_CS_DELTA_RANGE
+        if buy_range is None:
+            buy_range = CSR_CB_DELTA_RANGE
+
+    buy_prefix = "b_"
+    sell_prefix = "s_"
+    underlying = contracts.attrs["underlyingPrice"]
+       
+    columns = []
+    keep_list = ["description", "last", "mark", "delta", "strikePrice", "totalVolume"]
+
+    for name in keep_list:
+        columns.append(sell_prefix+name)
+        columns.append(buy_prefix+name)
+    derived_list = ["putcall", "e", "mg", "eml", "dme", "dme_u", "dme_w", "width", "mg_w", "mg_u", "mgp_u", "pop", "popt", "e_u", "e_w", "mtp", "ml", "ml_u" ]
+    for name in derived_list:
+        columns.append(name)
+          
+    candidate_rows = []
+    logging.debug(f"get_candidates - {len(contracts)} rows")
+    start = time.time()
+    df = contracts[contracts.putCall == putCall]
+    if daysToExpiration is not None:
+        df = df[df.daysToExpiration == daysToExpiration]
+    buy_df = df[abs(df.delta) >= buy_range[0]]
+    buy_df = buy_df[abs(buy_df.delta) <= buy_range[1]]
+    
+    #if abs(b.delta) < buy_range[0] or buy_range[1] < abs(b.delta):
+    #        logging.debug(f"skipping row {i}, b delta {b.delta} out of range: {buy_range}")
+    #        continue
+    
+    #buy_df = df[(df.delta < buy_range[0]) & (df.delta > buy_range[1])]
+    if len(buy_df) == 0:
+        logging.info("get_candidates, no buy rows")
+        return None
+    logging.info(f"get_candidates {putCall} buy rows: {len(buy_df)}")
+
+    sell_df = df[abs(df.delta) > sell_range[0]]
+    if len(sell_df) == 0:
+        logging.debug("no rows in sell_range")
+        return None
+    logging.debug(f"get_candidates sell rows > sell_range: {len(sell_df)}")
+    sell_df = sell_df[abs(sell_df.delta) < sell_range[1]]
+    if len(sell_df) == 0:
+        logging.debug("no rows in sell range")
+        return None
+    logging.info(f"get_candidates {putCall} sell rows: {len(sell_df)}")
+
+    """
+    sp = sell_df["strikePrice"]
+    logging.debug(f"b.strike: {b.strikePrice} sell - strike range: {sp.min()}, {sp.max()}")
+    if putCall == "PUT":
+        sell_df = sell_df[sell_df.strikePrice > b.strikePrice]
+    else:
+        # CALL
+        sell_df = sell_df[sell_df.strikePrice < b.strikePrice]
+    """
+    
+    for i, b in buy_df.iterrows(): 
+        logging.debug(f"buy iter {i}, strike: {b.strikePrice}")
+        if b.daysToExpiration != daysToExpiration:
+            logging.debug(f"skipping buy row {i}, daysToExpiration[{b.daysToExpiration}] != {daysToExpiration}")
+            continue
+        if b.putCall != putCall:
+            logging.debug(f"skipping buy row {i}, putCall[{b.putCall}] != {putCall}")
+            continue
+        if abs(b.delta) < buy_range[0] or buy_range[1] < abs(b.delta):
+            logging.debug(f"skipping row {i}, b delta {b.delta} out of range: {buy_range}")
+            # DEBUG:root:skipping row 452, b delta -0.01 out of range: (-0.1, -0.01)
+            continue
+
+        logging.debug(f"get_candidates - inner iteration loop: {len(contracts)} rows")
+        
+
+        
+        #if putCall == "PUT" and b.strikePrice >= s.strikePrice:  
+        #        logging.debug(f"skipping sell row {j}, buy price {b.strikePrice:.3f} >= sell price {s.strikePrice:.3f}")
+        #        continue
+        #if putCall == "CALL" and b.strikePrice <= s.strikePrice:  
+        #        logging.debug(f"skipping sell row {j}, buy price {b.strikePrice:.3f} <= sell price {s.strikePrice:.3f}")
+        #        continue
+        
+        """ 
+        sell_df = sell_df[sell_df.delta <= b.delta]
+        if len(sell_df) == 0:
+            logging.info("get_candidates no sell rows")
+            continue
+        logging.info(f"sell_df rows: {len(sell_df)}")
+        """
+
+        for j, s in sell_df.iterrows():
+            if s.daysToExpiration != daysToExpiration:
+                logging.debug(f"skipping sell row {j}, daysToExpiration[{s.daysToExpiration}] != {daysToExpiration}")
+                continue
+            if s.putCall != putCall:
+                logging.debug(f"skipping sell row {j}, putCall[{s.putCall}] != {putCall}")
+                continue
+            if abs(s.delta) < sell_range[0] or sell_range[1] < abs(s.delta):
+                logging.debug(f"skipping sell row {j},s  delta {abs(s.delta):.3f} out of range: {sell_range}")
+                continue
+            if putCall == "PUT" and b.strikePrice >= s.strikePrice:  
+                logging.debug(f"skipping sell row {j}, buy price {b.strikePrice:.3f} >= sell price {s.strikePrice:.3f}")
+                continue
+            if putCall == "CALL" and b.strikePrice <= s.strikePrice:  
+                logging.debug(f"skipping sell row {j}, buy price {b.strikePrice:.3f} <= sell price {s.strikePrice:.3f}")
+                continue                                                       
+            if abs(b.delta) > abs(s.delta):
+                logging.debug(f"skipping sell row {j}, b delta {b.delta} greater than ps_delta {s.delta}")
+                continue
+
+            # TBD: pre-elimination
+            row = {}
+            logging.debug(f"make row sell index: {s.index} buy_index: {b.index}")
+            for k in b.index:
+                if k not in keep_list:
+                    continue
+                b_key = buy_prefix + k
+                row[b_key] = b[k]
+            for k in s.index:
+                if k not in keep_list:
+                    continue
+                s_key = sell_prefix + k
+                row[s_key] = s[k]  
+            
+            if get_derived(row, putCall=putCall, underlying=underlying, options=contracts):
+                #if row["e"] > MIsN_VAL and row['e_u'] > MIN_VAL:
+                candidate_rows.append(row)   
+                logging.debug(f"add candidate row: {row}")
+            else:    
+                logging.warning("get_derived return none")                            
+                                                                
+    # construct candidates dataframe
+    logging.debug(f"candidate rows: {len(candidate_rows)}")
+    candidates =  pd.DataFrame(candidate_rows, columns=columns)
+    for k in contracts.attrs:
+        v = contracts.attrs[k]
+        candidates.attrs[k] = v
+    candidates.attrs['daysToExpiration'] = daysToExpiration
+    candidates.attrs["putCall"] = putCall
+    
+    #candidates = candidates.sort_values(by="e", ascending=False)
+
+    #candidates['pom'] = 1 - abs(candidates['s_delta'])
+    logging.info(f"get_candidates, returning {len(candidates)} candidates from {len(contracts)} contracts")
+    logging.info(f"time spent for {len(contracts)}: {(time.time() - start):.2f}")
+    candidates = candidates.sort_values(by="e_w", ascending=False)
+    return candidates
+
+"""
 def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, daysToExpiration=None):
     if len(contracts) == 0:
         logging.warning("no contracts")
@@ -574,5 +761,6 @@ def get_candidates(contracts, putCall=None, sell_range=None, buy_range=None, day
     candidates = candidates.sort_values(by="e_w", ascending=False)
     return candidates
     
+"""    
 
 
